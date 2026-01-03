@@ -1,0 +1,15 @@
+# Virtual environment
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Generated outputs
+data/alerts.csv
+
+# Runtime uploads
+data/uploads/*.csv
+
+# OS files
+.DS_Store
