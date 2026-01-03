@@ -1,117 +1,138 @@
 import pandas as pd
 import random
+import uuid
 from datetime import datetime, timedelta
 
 # -----------------------------
 # Configuration
 # -----------------------------
-NUM_EVENTS = 300
-START_TIME = datetime.now() - timedelta(days=7)
+TOTAL_EVENTS = 1200
+USERS = [f"user_{i}" for i in range(1, 21)]
+LOCATIONS = ["US", "IN", "DE", "FR"]
+HIGH_RISK_LOCATION = "RU"
 
-# Users and their normal properties
-USERS = {
-    "user_1": {"home_location": "US", "role": "viewer"},
-    "user_2": {"home_location": "US", "role": "editor"},
-    "user_3": {"home_location": "UK", "role": "viewer"},  # compromised user
-    "user_4": {"home_location": "DE", "role": "editor"},
-    "user_5": {"home_location": "US", "role": "viewer"},
-}
+ROLES = ["viewer", "editor", "admin"]
 
-ROLE_HIERARCHY = ["viewer", "editor", "admin"]
-
-RESOURCES = ["s3_bucket", "db_server", "config_file"]
-
-IP_POOLS = {
-    "US": ["34.12.45.1", "34.12.45.2"],
-    "UK": ["51.140.10.1", "51.140.10.2"],
-    "DE": ["18.196.5.1", "18.196.5.2"],
-    "RU": ["185.220.101.1"]  # attacker IP
-}
-
-# Attack configuration
-COMPROMISED_USER = "user_3"
-ATTACK_LOCATION = "RU"
-ATTACK_START = START_TIME + timedelta(days=6)
+START_TIME = datetime.utcnow()
 
 events = []
 
-# Track current role per user (stateful, realistic)
-current_roles = {u: USERS[u]["role"] for u in USERS}
-
 # -----------------------------
-# Event Generation
+# Helper Functions
 # -----------------------------
-for i in range(NUM_EVENTS):
-    user = random.choice(list(USERS.keys()))
-    action = random.choices(
-        ["login", "resource_access", "role_change"],
-        weights=[0.5, 0.35, 0.15]
-    )[0]
+def random_timestamp(offset_minutes):
+    return (START_TIME + timedelta(minutes=offset_minutes)).isoformat()
 
-    success = True
-    location = USERS[user]["home_location"]
-    ip = random.choice(IP_POOLS[location])
-    role = current_roles[user]
-
-    # -----------------------------
-    # NORMAL BEHAVIOR
-    # -----------------------------
-    timestamp = START_TIME + timedelta(
-        minutes=random.randint(0, 7 * 24 * 60)
-    )
-
-    # -----------------------------
-    # ATTACK BEHAVIOR (user_3)
-    # -----------------------------
-    if user == COMPROMISED_USER and random.random() < 0.25:
-        location = ATTACK_LOCATION
-        ip = IP_POOLS["RU"][0]
-
-        # Brute-force login attack
-        if action == "login":
-            success = False
-            timestamp = ATTACK_START + timedelta(
-                minutes=random.randint(0, 8)
-            )
-
-        # Rapid privilege escalation
-        if action == "role_change":
-            current_index = ROLE_HIERARCHY.index(current_roles[user])
-            if current_index < len(ROLE_HIERARCHY) - 1:
-                role = ROLE_HIERARCHY[current_index + 1]
-                current_roles[user] = role
-                timestamp = ATTACK_START + timedelta(
-                    minutes=random.randint(10, 30)
-                )
-
-    # -----------------------------
-    # Normal role changes (slow, rare)
-    # -----------------------------
-    if action == "role_change" and user != COMPROMISED_USER:
-        if random.random() < 0.05:
-            current_index = ROLE_HIERARCHY.index(current_roles[user])
-            if current_index < len(ROLE_HIERARCHY) - 1:
-                role = ROLE_HIERARCHY[current_index + 1]
-                current_roles[user] = role
-
-    event = {
-        "event_id": i + 1,
+def generate_event(
+    user,
+    action,
+    role,
+    location,
+    success=True,
+    offset=0,
+    resource="console"
+):
+    return {
+        "event_id": str(uuid.uuid4()),
         "user_id": user,
-        "timestamp": timestamp,
+        "timestamp": random_timestamp(offset),
         "action": action,
-        "success": success,
+        "resource": resource,
         "role": role,
-        "resource": random.choice(RESOURCES),
-        "ip_address": ip,
-        "location": location
+        "location": location,
+        "success": success
     }
 
-    events.append(event)
+# -----------------------------
+# 1. Normal Baseline Activity (≈80%)
+# -----------------------------
+current_minute = 0
+
+for _ in range(range_count := int(TOTAL_EVENTS * 0.8)):
+    user = random.choice(USERS)
+    location = random.choice(LOCATIONS)
+    events.append(
+        generate_event(
+            user=user,
+            action="login",
+            role="viewer",
+            location=location,
+            success=True,
+            offset=current_minute
+        )
+    )
+    current_minute += random.randint(1, 3)
 
 # -----------------------------
-# Save Logs
+# 2. Unusual Login Locations
 # -----------------------------
-df = pd.DataFrame(events).sort_values("timestamp")
+for user in random.sample(USERS, 3):
+    # Baseline login
+    events.append(
+        generate_event(
+            user=user,
+            action="login",
+            role="viewer",
+            location="US",
+            offset=current_minute
+        )
+    )
+    current_minute += 2
+
+    # High-risk login
+    events.append(
+        generate_event(
+            user=user,
+            action="login",
+            role="viewer",
+            location=HIGH_RISK_LOCATION,
+            offset=current_minute
+        )
+    )
+    current_minute += 2
+
+# -----------------------------
+# 3. Brute Force Login Attempts
+# -----------------------------
+for user in random.sample(USERS, 3):
+    for i in range(5):
+        events.append(
+            generate_event(
+                user=user,
+                action="login",
+                role="viewer",
+                location="US",
+                success=False,
+                offset=current_minute + i
+            )
+        )
+    current_minute += 10
+
+# -----------------------------
+# 4. Rapid Privilege Escalation
+# -----------------------------
+for user in random.sample(USERS, 2):
+    roles_sequence = ["viewer", "editor", "admin"]
+    for i, role in enumerate(roles_sequence):
+        events.append(
+            generate_event(
+                user=user,
+                action="role_change",
+                role=role,
+                location="US",
+                offset=current_minute + (i * 5),
+                resource="iam"
+            )
+        )
+    current_minute += 20
+
+# -----------------------------
+# Finalize Dataset
+# -----------------------------
+df = pd.DataFrame(events)
+df = df.sort_values("timestamp")
+
 df.to_csv("data/simulated_logs.csv", index=False)
 
-print("Realistic simulated IAM logs saved to data/simulated_logs.csv")
+print(f"[SUCCESS] Generated {len(df)} IAM log events")
+print("[INFO] Dataset includes normal activity and simulated abuse patterns")
