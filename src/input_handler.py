@@ -8,7 +8,6 @@ REQUIRED_COLUMNS = {
     "action",
     "resource",
     "role",
-    "ip_address",
     "location",
     "success"
 }
